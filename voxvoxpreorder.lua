@@ -26,7 +26,7 @@ local Lighting = game:GetService("Lighting")
 -- ============================================================
 local KeySystem = {
     Enabled = true,
-    CorrectKey = "voxyhubai12",
+    CorrectKey = "voxyhubpremiumeversion2",
     Authenticated = false,
 }
 
