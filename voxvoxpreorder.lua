@@ -86,6 +86,10 @@ local Config = {
     JumpPower = 50,
     InfiniteJump = false,
     
+    -- God Mode Settings
+    GodMode = false,
+    Invisible = false,
+    
     -- Teleport Settings
     SelectedPlayer = nil,
     
@@ -119,6 +123,8 @@ local State = {
     OpenDropdowns = {},
     AimbotFOVCircle = nil,
     AimbotTarget = nil,
+    GodModeConnection = nil,
+    OriginalTransparency = {},
 }
 
 -- ============================================================
@@ -689,6 +695,120 @@ function Visual.EnableNoFog()
 end
 
 -- ============================================================
+-- CHARACTER FEATURES
+-- ============================================================
+local Character = {}
+
+function Character.EnableGodMode()
+    if Config.GodMode then
+        if State.GodModeConnection then
+            State.GodModeConnection:Disconnect()
+        end
+        
+        State.GodModeConnection = RunService.Heartbeat:Connect(function()
+            if Config.GodMode and LocalPlayer.Character then
+                local humanoid = LocalPlayer.Character:FindFirstChild("Humanoid")
+                if humanoid then
+                    -- Set health to max constantly
+                    humanoid.Health = humanoid.MaxHealth
+                    
+                    -- Disable taking damage
+                    if humanoid.Health < humanoid.MaxHealth then
+                        humanoid.Health = humanoid.MaxHealth
+                    end
+                end
+            end
+        end)
+        
+        -- Also hook into health changes
+        if LocalPlayer.Character then
+            local humanoid = LocalPlayer.Character:FindFirstChild("Humanoid")
+            if humanoid then
+                humanoid.HealthChanged:Connect(function(health)
+                    if Config.GodMode and health < humanoid.MaxHealth then
+                        humanoid.Health = humanoid.MaxHealth
+                    end
+                end)
+            end
+        end
+        
+        print("[Character] God Mode enabled - Infinite Health + No Damage")
+    else
+        if State.GodModeConnection then
+            State.GodModeConnection:Disconnect()
+            State.GodModeConnection = nil
+        end
+        
+        print("[Character] God Mode disabled")
+    end
+end
+
+function Character.EnableInvisibility()
+    if Config.Invisible then
+        if LocalPlayer.Character then
+            -- Store original transparency values
+            for _, part in pairs(LocalPlayer.Character:GetDescendants()) do
+                if part:IsA("BasePart") or part:IsA("Decal") or part:IsA("Texture") then
+                    if not State.OriginalTransparency[part] then
+                        State.OriginalTransparency[part] = part.Transparency
+                    end
+                    part.Transparency = 1
+                elseif part:IsA("Accessory") or part:IsA("Hat") then
+                    local handle = part:FindFirstChild("Handle")
+                    if handle then
+                        if not State.OriginalTransparency[handle] then
+                            State.OriginalTransparency[handle] = handle.Transparency
+                        end
+                        handle.Transparency = 1
+                    end
+                end
+            end
+            
+            -- Hide face
+            local head = LocalPlayer.Character:FindFirstChild("Head")
+            if head then
+                local face = head:FindFirstChild("face")
+                if face then
+                    if not State.OriginalTransparency[face] then
+                        State.OriginalTransparency[face] = face.Transparency
+                    end
+                    face.Transparency = 1
+                end
+            end
+        end
+        
+        print("[Character] Invisibility enabled")
+    else
+        -- Restore original transparency
+        if LocalPlayer.Character then
+            for part, originalTransparency in pairs(State.OriginalTransparency) do
+                if part and part.Parent then
+                    part.Transparency = originalTransparency
+                end
+            end
+            State.OriginalTransparency = {}
+        end
+        
+        print("[Character] Invisibility disabled")
+    end
+end
+
+function Character.Initialize()
+    -- Re-apply invisibility when character respawns
+    LocalPlayer.CharacterAdded:Connect(function(character)
+        wait(0.1) -- Wait for character to load
+        
+        if Config.Invisible then
+            Character.EnableInvisibility()
+        end
+        
+        if Config.GodMode then
+            Character.EnableGodMode()
+        end
+    end)
+end
+
+-- ============================================================
 -- MOVEMENT FEATURES
 -- ============================================================
 local Movement = {}
@@ -1151,6 +1271,7 @@ function GUI.CreateKeySystem()
             Combat.EnableNoRecoil()
             Combat.EnableAimbot()
             Combat.CreateAimbotFOVCircle()
+            Character.Initialize()
             GUI.Create()
             
             -- Start main loops
@@ -1823,7 +1944,41 @@ function GUI.CreateVisualTab(parent)
 end
 
 function GUI.CreateMovementTab(parent)
-    local moveSection = GUI.CreateSection(parent, "🏃 Movement Features", 1)
+    local charSection = GUI.CreateSection(parent, "⭐ Character Features", 1)
+    
+    GUI.CreateToggle(charSection, "God Mode (Infinite Health)", Config.GodMode, function(value)
+        Config.GodMode = value
+        Character.EnableGodMode()
+    end, 1)
+    
+    GUI.CreateToggle(charSection, "Invisibility", Config.Invisible, function(value)
+        Config.Invisible = value
+        Character.EnableInvisibility()
+    end, 2)
+    
+    local charInfo = Instance.new("TextLabel")
+    charInfo.Size = UDim2.new(1, 0, 0, 50)
+    charInfo.BackgroundColor3 = Config.Theme.Primary
+    charInfo.BorderSizePixel = 0
+    charInfo.Text = "⚡ God Mode: Cannot die or take damage\n👻 Invisibility: Makes you completely invisible"
+    charInfo.Font = Enum.Font.Gotham
+    charInfo.TextSize = 10
+    charInfo.TextColor3 = Config.Theme.TextDark
+    charInfo.TextWrapped = true
+    charInfo.TextYAlignment = Enum.TextYAlignment.Top
+    charInfo.LayoutOrder = 3
+    charInfo.Parent = charSection
+    
+    Utils.CreateCorner(charInfo, 6)
+    
+    local charPadding = Instance.new("UIPadding")
+    charPadding.PaddingTop = UDim.new(0, 6)
+    charPadding.PaddingBottom = UDim.new(0, 6)
+    charPadding.PaddingLeft = UDim.new(0, 6)
+    charPadding.PaddingRight = UDim.new(0, 6)
+    charPadding.Parent = charInfo
+    
+    local moveSection = GUI.CreateSection(parent, "🏃 Movement Features", 2)
     
     GUI.CreateToggle(moveSection, "NoClip", Config.NoClip, function(value)
         Config.NoClip = value
@@ -2030,9 +2185,19 @@ function GUI.Destroy()
         State.FlightConnection:Disconnect()
     end
     
+    if State.GodModeConnection then
+        State.GodModeConnection:Disconnect()
+    end
+    
     if State.AimbotFOVCircle then
         State.AimbotFOVCircle:Remove()
         State.AimbotFOVCircle = nil
+    end
+    
+    -- Restore invisibility
+    if Config.Invisible then
+        Config.Invisible = false
+        Character.EnableInvisibility()
     end
     
     if GUI.ScreenGui then
