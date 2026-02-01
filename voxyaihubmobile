@@ -105,19 +105,21 @@ function Aimbot.GetTarget()
 	local screenCenter = Camera.ViewportSize / 2
 	for _, p in ipairs(Players:GetPlayers()) do
 		if p ~= LocalPlayer and isAlive(p) then
-			if C.Aimbot.TeamCheck and p.Team == LocalPlayer.Team then goto continue end
-			local head = p.Character and p.Character:FindFirstChild("Head")
-			if head then
-				local sp, onScreen = Camera:WorldToViewportPoint(head.Position)
-				if onScreen then
-					local d = (Vector2.new(sp.X, sp.Y) - screenCenter).Magnitude
-					if d < C.Aimbot.FOV and d < bestDist then
-						bestDist = d
-						best = { Player = p, Part = head }
+			if C.Aimbot.TeamCheck and p.Team and LocalPlayer.Team and p.Team == LocalPlayer.Team then
+				-- skip teammate
+			else
+				local head = p.Character and p.Character:FindFirstChild("Head")
+				if head then
+					local sp, onScreen = Camera:WorldToViewportPoint(head.Position)
+					if onScreen then
+						local d = (Vector2.new(sp.X, sp.Y) - screenCenter).Magnitude
+						if d < C.Aimbot.FOV and d < bestDist then
+							bestDist = d
+							best = { Player = p, Part = head }
+						end
 					end
 				end
 			end
-			::continue::
 		end
 	end
 	return best
@@ -499,7 +501,7 @@ function MGui.Slider(parent, label, min, max, default, callback, order, dec)
 	local lbl = Instance.new("TextLabel")
 	lbl.Size = UDim2.new(0.7, -20, 0, 26)
 	lbl.Position = UDim2.new(0, 16, 0, 8)
-	lbl.BackgroundTransparency = true
+	lbl.BackgroundTransparency = 1
 	lbl.Text = label
 	lbl.Font = Enum.Font.GothamBold
 	lbl.TextSize = 15
@@ -510,7 +512,7 @@ function MGui.Slider(parent, label, min, max, default, callback, order, dec)
 	local valLbl = Instance.new("TextLabel")
 	valLbl.Size = UDim2.new(0.3, -20, 0, 26)
 	valLbl.Position = UDim2.new(0.7, 4, 0, 8)
-	valLbl.BackgroundTransparency = true
+	valLbl.BackgroundTransparency = 1
 	valLbl.Text = dec and string.format("%."..dec.."f", default) or tostring(math.floor(default))
 	valLbl.Font = Enum.Font.GothamBold
 	valLbl.TextSize = 15
@@ -856,7 +858,7 @@ function GUI.BuildKeyScreen()
 
 	local logoTxt = Instance.new("TextLabel")
 	logoTxt.Size = UDim2.new(1,0,1,0)
-	logoTxt.BackgroundTransparency = true
+	logoTxt.BackgroundTransparency = 1
 	logoTxt.Text = "AI"
 	logoTxt.Font = Enum.Font.GothamBold
 	logoTxt.TextSize = 36
@@ -867,7 +869,7 @@ function GUI.BuildKeyScreen()
 	local title = Instance.new("TextLabel")
 	title.Size = UDim2.new(1, -40, 0, 36)
 	title.Position = UDim2.new(0, 20, 0, 118)
-	title.BackgroundTransparency = true
+	title.BackgroundTransparency = 1
 	title.Text = "OPAIHUBVOXY"
 	title.Font = Enum.Font.GothamBold
 	title.TextSize = 28
@@ -877,7 +879,7 @@ function GUI.BuildKeyScreen()
 	local sub = Instance.new("TextLabel")
 	sub.Size = UDim2.new(1, -40, 0, 22)
 	sub.Position = UDim2.new(0, 20, 0, 154)
-	sub.BackgroundTransparency = true
+	sub.BackgroundTransparency = 1
 	sub.Text = "Mobile • AI-Powered Hub • v2.0"
 	sub.Font = Enum.Font.Gotham
 	sub.TextSize = 13
@@ -917,7 +919,7 @@ function GUI.BuildKeyScreen()
 	local keyBox = Instance.new("TextBox")
 	keyBox.Size = UDim2.new(1, -24, 1, 0)
 	keyBox.Position = UDim2.new(0, 12, 0, 0)
-	keyBox.BackgroundTransparency = true
+	keyBox.BackgroundTransparency = 1
 	keyBox.Text = ""
 	keyBox.PlaceholderText = "Enter key here..."
 	keyBox.Font = Enum.Font.GothamMedium
@@ -946,15 +948,22 @@ function GUI.BuildKeyScreen()
 	local spacer = Instance.new("Frame")
 	spacer.Size = UDim2.new(1, 0, 0, 24)
 	spacer.Position = UDim2.new(0, 0, 0, 382)
-	spacer.BackgroundTransparency = true
+	spacer.BackgroundTransparency = 1
 	spacer.Parent = card
 
-	-- center card vertically
+	-- center card vertically - use a short loop because PropertyChanged can miss on mobile
 	local function centerCard()
-		card.Position = UDim2.new(0.06, 0, 0.5, -card.AbsoluteSize.Y / 2)
+		if card.AbsoluteSize.Y > 0 then
+			card.Position = UDim2.new(0.06, 0, 0.5, -card.AbsoluteSize.Y / 2)
+		end
 	end
-	task.delay(0.1, centerCard)
-	card.PropertyChanged:Connect(function(p) if p == "AbsoluteSize" then centerCard() end end)
+	local centerConn
+	centerConn = RunService.RenderStepped:Connect(function()
+		centerCard()
+		if card.AbsoluteSize.Y > 10 then
+			centerConn:Disconnect()
+		end
+	end)
 
 	local function verify()
 		if keyBox.Text == KeySystem.CorrectKey then
@@ -1023,7 +1032,7 @@ function GUI.BuildMain()
 	-- ── AIM BUTTON (bottom-right, in-game aimbot trigger) ──
 	local aimBtn = Instance.new("TextButton")
 	aimBtn.Size = UDim2.new(0, 72, 0, 72)
-	aimBtn.Position = UDim2.new(1, -88, 1, -88)
+	aimBtn.Position = UDim2.new(1, -88, 1, -148)
 	aimBtn.BackgroundColor3 = Theme.Primary
 	aimBtn.BorderSizePixel = 0
 	aimBtn.Text = "🎯"
@@ -1039,8 +1048,8 @@ function GUI.BuildMain()
 	-- ring around aim button
 	local aimRing = Instance.new("Frame")
 	aimRing.Size = UDim2.new(0, 84, 0, 84)
-	aimRing.Position = UDim2.new(1, -94, 1, -94)
-	aimRing.BackgroundTransparency = true
+	aimRing.Position = UDim2.new(1, -94, 1, -154)
+	aimRing.BackgroundTransparency = 1
 	aimRing.BorderSizePixel = 0
 	aimRing.ZIndex = 9
 	aimRing.Parent = sg
@@ -1050,7 +1059,7 @@ function GUI.BuildMain()
 	-- ── MAIN PANEL ──
 	local panel = Instance.new("Frame")
 	panel.Name = "Panel"
-	panel.Size = UDim2.new(1, 0, 1, -60) -- leaves room for bottom nav
+	panel.Size = UDim2.new(1, 0, 1, -60) -- 60px reserved at bottom for nav bar
 	panel.BackgroundColor3 = Theme.BG
 	panel.BorderSizePixel = 0
 	panel.Parent = sg
@@ -1066,7 +1075,7 @@ function GUI.BuildMain()
 	local headerTitle = Instance.new("TextLabel")
 	headerTitle.Size = UDim2.new(1, -100, 1, 0)
 	headerTitle.Position = UDim2.new(0, 56, 0, 0)
-	headerTitle.BackgroundTransparency = true
+	headerTitle.BackgroundTransparency = 1
 	headerTitle.Text = "OPAIHUBVOXY"
 	headerTitle.Font = Enum.Font.GothamBold
 	headerTitle.TextSize = 20
@@ -1089,9 +1098,9 @@ function GUI.BuildMain()
 
 	-- ── SCROLLABLE CONTENT AREA ──
 	local contentArea = Instance.new("Frame")
-	contentArea.Size = UDim2.new(1, 0, 1, -108) -- 48 header + 60 nav
+	contentArea.Size = UDim2.new(1, 0, 1, -48) -- panel already excludes nav; just subtract 48px header
 	contentArea.Position = UDim2.new(0, 0, 0, 48)
-	contentArea.BackgroundTransparency = true
+	contentArea.BackgroundTransparency = 1
 	contentArea.Parent = panel
 	GUI.ContentArea = contentArea
 
@@ -1101,9 +1110,10 @@ function GUI.BuildMain()
 		local scroll = Instance.new("ScrollingFrame")
 		scroll.Name = name .. "Tab"
 		scroll.Size = UDim2.new(1, 0, 1, 0)
-		scroll.BackgroundTransparency = true
+		scroll.BackgroundTransparency = 1
 		scroll.BorderSizePixel = 0
 		scroll.ScrollBarThickness = 0
+		scroll.ClipsDescendants = true
 		scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
 		scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
 		scroll.Visible = (i == 1)
@@ -1132,7 +1142,7 @@ function GUI.BuildMain()
 	navBar.Position = UDim2.new(0, 0, 1, -60)
 	navBar.BackgroundColor3 = Theme.NavBG
 	navBar.BorderSizePixel = 0
-	navBar.ZIndex = 5
+	navBar.ZIndex = 8
 	navBar.Parent = sg
 	-- top edge line
 	stroke(navBar, Theme.Border, 1)
@@ -1194,6 +1204,7 @@ function GUI.BuildMain()
 		panelVisible = v
 		panel.Visible = v
 		navBar.Visible = v
+		-- toggle and aim buttons ALWAYS stay visible
 		toggleBtn.Text = v and "☰" or "🔒"
 	end
 
