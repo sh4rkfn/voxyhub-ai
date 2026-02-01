@@ -1,0 +1,1248 @@
+--[[
+	═══════════════════════════════════════════════════════════
+	OPAIHUBVOXY MOBILE - AI-POWERED MULTI-GAME HUB
+	Version: 2.0 Mobile
+	Optimized for touch devices
+	
+	Supported Games: Arsenal | Rivals | Zombie Uprising | Universal
+	═══════════════════════════════════════════════════════════
+]]
+
+-- ============================================================
+-- SERVICES
+-- ============================================================
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local Lighting = game:GetService("Lighting")
+
+-- ============================================================
+-- CORE
+-- ============================================================
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+local KeySystem = { CorrectKey = "voxyhub", Authenticated = false }
+
+local GameDetector = {
+	CurrentGame = "Universal",
+	Games = {
+		[286090429] = "Arsenal",
+		[5938036553] = "Arsenal",
+		[17541193534] = "Rivals",
+		[2749712308] = "Zombie Uprising",
+	}
+}
+function GameDetector.Detect()
+	GameDetector.CurrentGame = GameDetector.Games[game.PlaceId] or "Universal"
+	print("[OpAiHubVoxy] Game: " .. GameDetector.CurrentGame)
+end
+
+-- ============================================================
+-- CONFIG
+-- ============================================================
+local C = {
+	Aimbot = { Enabled = false, FOV = 200, Smooth = 0.07, Prediction = 0.15, TeamCheck = true, Active = false },
+	ESP = { Enabled = false, Boxes = true, Names = true, Tracers = true, Distance = true, Health = true, TeamCheck = true, MaxDist = 3000 },
+	Combat = { InfAmmo = false, NoRecoil = false, NoSpread = false, RapidFire = false, AutoShoot = false },
+	Move = { Speed = 16, Jump = 50, Flight = false, FlightSpeed = 100, NoClip = false, InfJump = false },
+	Visual = { Fullbright = false, NoFog = false },
+}
+
+local Theme = {
+	BG = Color3.fromRGB(10, 10, 20),
+	Surface = Color3.fromRGB(18, 18, 35),
+	Card = Color3.fromRGB(25, 25, 48),
+	Primary = Color3.fromRGB(138, 43, 226),
+	Cyan = Color3.fromRGB(0, 220, 255),
+	Magenta = Color3.fromRGB(220, 0, 220),
+	Success = Color3.fromRGB(0, 230, 140),
+	Danger = Color3.fromRGB(230, 60, 90),
+	Warning = Color3.fromRGB(240, 180, 0),
+	Text = Color3.fromRGB(255, 255, 255),
+	TextDim = Color3.fromRGB(140, 140, 170),
+	Border = Color3.fromRGB(70, 45, 110),
+	NavBG = Color3.fromRGB(12, 12, 25),
+}
+
+-- ============================================================
+-- STATE
+-- ============================================================
+local State = {
+	ESP = {},
+	Connections = {},
+	FlightConn = nil,
+	NoClipConn = nil,
+	CurrentTab = "Home",
+	MenuButtons = {},
+	TabFrames = {},
+	GuiOpen = true,
+}
+
+-- ============================================================
+-- UTILS
+-- ============================================================
+local function corner(p, r) local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r or 12); c.Parent = p; return c end
+local function stroke(p, col, t) local s = Instance.new("UIStroke"); s.Color = col or Theme.Border; s.Thickness = t or 1; s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; s.Parent = p end
+local function gradient(p, c1, c2, rot) local g = Instance.new("UIGradient"); g.Color = ColorSequence.new({ColorSequenceKeypoint.new(0,c1), ColorSequenceKeypoint.new(1,c2)}); g.Rotation = rot or 90; g.Parent = p end
+local function tween(inst, props, dur) TweenService:Create(inst, TweenInfo.new(dur or 0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props):Play() end
+
+local function isAlive(p)
+	if not p or not p.Character then return false end
+	local h = p.Character:FindFirstChild("Humanoid")
+	return h and h.Health > 0
+end
+
+-- ============================================================
+-- AIMBOT (touch-triggered via on-screen button)
+-- ============================================================
+local Aimbot = {}
+
+function Aimbot.GetTarget()
+	local best, bestDist = nil, math.huge
+	local screenCenter = Camera.ViewportSize / 2
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= LocalPlayer and isAlive(p) then
+			if C.Aimbot.TeamCheck and p.Team == LocalPlayer.Team then goto continue end
+			local head = p.Character and p.Character:FindFirstChild("Head")
+			if head then
+				local sp, onScreen = Camera:WorldToViewportPoint(head.Position)
+				if onScreen then
+					local d = (Vector2.new(sp.X, sp.Y) - screenCenter).Magnitude
+					if d < C.Aimbot.FOV and d < bestDist then
+						bestDist = d
+						best = { Player = p, Part = head }
+					end
+				end
+			end
+			::continue::
+		end
+	end
+	return best
+end
+
+function Aimbot.AimAt(target)
+	if not target then return end
+	local pos = target.Part.Position
+	if C.Aimbot.Prediction then
+		local vel = target.Part.AssemblyLinearVelocity
+		pos = pos + vel * C.Aimbot.Prediction
+	end
+	local camPos = Camera.CFrame.Position
+	local dir = (pos - camPos).Unit
+	local look = Camera.CFrame.LookVector:Lerp(dir, C.Aimbot.Smooth)
+	Camera.CFrame = CFrame.new(camPos, camPos + look)
+end
+
+-- ============================================================
+-- ESP
+-- ============================================================
+local ESP = {}
+
+function ESP.Create(player)
+	if State.ESP[player] then ESP.Remove(player) end
+	local d = { Box = {} }
+	for i = 1,4 do
+		d.Box[i] = Drawing.new("Line")
+		d.Box[i].Thickness = 2
+		d.Box[i].Color = Color3.fromRGB(255, 0, 255)
+		d.Box[i].Visible = false
+	end
+	d.Tracer = Drawing.new("Line"); d.Tracer.Thickness = 2; d.Tracer.Color = Color3.fromRGB(0,255,255); d.Tracer.Visible = false
+	d.Name = Drawing.new("Text"); d.Name.Size = 14; d.Name.Center = true; d.Name.Outline = true; d.Name.Color = Color3.fromRGB(255,0,255); d.Name.Visible = false
+	d.Dist = Drawing.new("Text"); d.Dist.Size = 12; d.Dist.Center = true; d.Dist.Outline = true; d.Dist.Color = Color3.fromRGB(255,0,255); d.Dist.Visible = false
+	d.HpBar = Drawing.new("Line"); d.HpBar.Thickness = 3; d.HpBar.Visible = false
+	d.HpOutline = Drawing.new("Line"); d.HpOutline.Thickness = 3; d.HpOutline.Color = Color3.new(0,0,0); d.HpOutline.Visible = false
+	State.ESP[player] = d
+end
+
+function ESP.Remove(player)
+	local d = State.ESP[player]
+	if not d then return end
+	for i=1,4 do pcall(function() d.Box[i]:Remove() end) end
+	for _, k in ipairs({"Tracer","Name","Dist","HpBar","HpOutline"}) do pcall(function() d[k]:Remove() end) end
+	State.ESP[player] = nil
+end
+
+function ESP.Hide(player)
+	local d = State.ESP[player]
+	if not d then return end
+	for i=1,4 do d.Box[i].Visible = false end
+	d.Tracer.Visible = false; d.Name.Visible = false; d.Dist.Visible = false; d.HpBar.Visible = false; d.HpOutline.Visible = false
+end
+
+function ESP.Update(player)
+	if not C.ESP.Enabled or player == LocalPlayer then return end
+	local d = State.ESP[player]
+	if not d then return end
+	if not isAlive(player) then ESP.Hide(player); return end
+
+	local char = player.Character
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	local hum = char:FindFirstChild("Humanoid")
+	local head = char:FindFirstChild("Head")
+	if not hrp or not hum or not head then ESP.Hide(player); return end
+
+	local dist = (hrp.Position - Camera.CFrame.Position).Magnitude
+	if dist > C.ESP.MaxDist then ESP.Hide(player); return end
+	if C.ESP.TeamCheck and player.Team and LocalPlayer.Team and player.Team == LocalPlayer.Team then ESP.Hide(player); return end
+
+	-- 8 corners of bounding box
+	local corners = {}
+	for x = -1,1,2 do for y = -1,1,2 do for z = -1,1,2 do
+		table.insert(corners, (hrp.CFrame * CFrame.new(x*1.2, y*2.5, z*0.8)).Position)
+	end end end
+
+	local minX, minY, maxX, maxY = math.huge, math.huge, -math.huge, -math.huge
+	local anyVis = false
+	for _, c in ipairs(corners) do
+		local sp, on = Camera:WorldToViewportPoint(c)
+		if on then
+			anyVis = true
+			minX = math.min(minX, sp.X); minY = math.min(minY, sp.Y)
+			maxX = math.max(maxX, sp.X); maxY = math.max(maxY, sp.Y)
+		end
+	end
+	if not anyVis then ESP.Hide(player); return end
+
+	-- Box
+	if C.ESP.Boxes then
+		local tl,tr,bl,br = Vector2.new(minX,minY), Vector2.new(maxX,minY), Vector2.new(minX,maxY), Vector2.new(maxX,maxY)
+		d.Box[1].From=tl; d.Box[1].To=tr; d.Box[1].Visible=true
+		d.Box[2].From=bl; d.Box[2].To=br; d.Box[2].Visible=true
+		d.Box[3].From=tl; d.Box[3].To=bl; d.Box[3].Visible=true
+		d.Box[4].From=tr; d.Box[4].To=br; d.Box[4].Visible=true
+	else for i=1,4 do d.Box[i].Visible=false end end
+
+	-- Tracer
+	if C.ESP.Tracers then
+		d.Tracer.From = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y)
+		d.Tracer.To = Vector2.new((minX+maxX)/2, maxY)
+		d.Tracer.Visible = true
+	else d.Tracer.Visible = false end
+
+	-- Name
+	if C.ESP.Names then
+		d.Name.Position = Vector2.new((minX+maxX)/2, minY - 16)
+		d.Name.Text = player.Name
+		d.Name.Visible = true
+	else d.Name.Visible = false end
+
+	-- Distance
+	if C.ESP.Distance then
+		d.Dist.Position = Vector2.new((minX+maxX)/2, minY - 30)
+		d.Dist.Text = string.format("%.0fm", dist)
+		d.Dist.Visible = true
+	else d.Dist.Visible = false end
+
+	-- Health bar
+	if C.ESP.Health then
+		local pct = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+		local col = Color3.fromRGB(255*(1-pct), 255*pct, 0)
+		local barH = maxY - minY
+		d.HpOutline.From = Vector2.new(minX-6, minY); d.HpOutline.To = Vector2.new(minX-6, maxY); d.HpOutline.Visible = true
+		d.HpBar.From = Vector2.new(minX-6, maxY); d.HpBar.To = Vector2.new(minX-6, maxY - barH*pct); d.HpBar.Color = col; d.HpBar.Visible = true
+	else d.HpBar.Visible=false; d.HpOutline.Visible=false end
+end
+
+function ESP.Init()
+	for p, _ in pairs(State.ESP) do ESP.Remove(p) end
+	State.ESP = {}
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= LocalPlayer then ESP.Create(p) end
+	end
+	Players.PlayerAdded:Connect(function(p) task.wait(1); if p ~= LocalPlayer then ESP.Create(p) end end)
+	Players.PlayerRemoving:Connect(function(p) ESP.Remove(p) end)
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= LocalPlayer then
+			p.CharacterAdded:Connect(function() task.wait(0.5); ESP.Create(p) end)
+		end
+	end
+end
+
+-- ============================================================
+-- MOVEMENT
+-- ============================================================
+local Movement = {}
+
+function Movement.SetSpeed()
+	local c = LocalPlayer.Character
+	if c then local h = c:FindFirstChild("Humanoid"); if h then h.WalkSpeed = C.Move.Speed end end
+end
+function Movement.SetJump()
+	local c = LocalPlayer.Character
+	if c then local h = c:FindFirstChild("Humanoid"); if h then h.JumpPower = C.Move.Jump end end
+end
+
+function Movement.Flight(on)
+	if State.FlightConn then State.FlightConn:Disconnect(); State.FlightConn = nil end
+	local c = LocalPlayer.Character
+	if c then
+		local hrp = c:FindFirstChild("HumanoidRootPart")
+		if hrp then
+			local old = hrp:FindFirstChild("_OAIMobileFlight")
+			if old then old:Destroy() end
+		end
+	end
+	if not on then return end
+
+	State.FlightConn = RunService.Heartbeat:Connect(function()
+		local ch = LocalPlayer.Character
+		if not ch then return end
+		local hrp = ch:FindFirstChild("HumanoidRootPart")
+		if not hrp then return end
+
+		local bv = hrp:FindFirstChild("_OAIMobileFlight")
+		if not bv then
+			bv = Instance.new("BodyVelocity")
+			bv.Name = "_OAIMobileFlight"
+			bv.MaxForce = Vector3.new(1e6,1e6,1e6)
+			bv.Parent = hrp
+		end
+
+		-- On mobile, movement is camera-relative via the thumbstick
+		-- We detect movement from the character's MoveDirection
+		local md = hrp:FindFirstChild("Humanoid") and ch:FindFirstChild("Humanoid")
+		local moveDir = Vector3.new(0,0,0)
+		if md then moveDir = md.MoveDirection end
+
+		local vel = moveDir * C.Move.FlightSpeed
+		-- Hold jump button (space equivalent) = go up; if not moving at all, hover
+		vel = Vector3.new(vel.X, C.Move.FlightSpeed * 0.3, vel.Z) -- slight upward bias to hover
+		bv.Velocity = vel
+	end)
+end
+
+function Movement.NoClip(on)
+	if State.NoClipConn then State.NoClipConn:Disconnect(); State.NoClipConn = nil end
+	if not on then
+		local c = LocalPlayer.Character
+		if c then for _, p in pairs(c:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = true end end end
+		return
+	end
+	State.NoClipConn = RunService.Stepped:Connect(function()
+		local c = LocalPlayer.Character
+		if c then for _, p in pairs(c:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = false end end end
+	end)
+end
+
+function Movement.InfJump()
+	local conn = UserInputService.JumpRequest:Connect(function()
+		if not C.Move.InfJump then return end
+		local c = LocalPlayer.Character
+		if c then
+			local h = c:FindFirstChildOfClass("Humanoid")
+			if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+		end
+	end)
+	table.insert(State.Connections, conn)
+end
+
+-- ============================================================
+-- VISUAL
+-- ============================================================
+local function applyFullbright(on)
+	if on then
+		Lighting.Brightness = 3; Lighting.ClockTime = 14; Lighting.GlobalShadows = false
+		Lighting.OutdoorAmbient = Color3.fromRGB(200,200,200)
+	else
+		Lighting.Brightness = 1; Lighting.GlobalShadows = true
+	end
+end
+local function applyNoFog(on)
+	Lighting.FogEnd = on and 100000 or 1000
+end
+
+-- ============================================================
+-- MOBILE GUI BUILDER HELPERS
+-- ============================================================
+local MGui = {}
+
+-- Creates a standard toggle row (big touch target)
+function MGui.Toggle(parent, label, default, callback, order)
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(1, 0, 0, 52)
+	frame.BackgroundColor3 = Theme.Card
+	frame.BorderSizePixel = 0
+	frame.LayoutOrder = order
+	frame.Parent = parent
+	corner(frame, 14)
+	stroke(frame, Theme.Border, 1)
+
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.new(1, -70, 1, 0)
+	lbl.BackgroundTransparency = 1
+	lbl.Text = label
+	lbl.Font = Enum.Font.GothamBold
+	lbl.TextSize = 16
+	lbl.TextColor3 = Theme.Text
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.Parent = frame
+
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 16)
+	pad.Parent = lbl
+
+	-- Switch track
+	local track = Instance.new("TextButton")
+	track.Size = UDim2.new(0, 54, 0, 30)
+	track.Position = UDim2.new(1, -62, 0.5, -15)
+	track.BackgroundColor3 = default and Theme.Success or Theme.Border
+	track.BorderSizePixel = 0
+	track.Text = ""
+	track.AutoButtonColor = false
+	track.Parent = frame
+	corner(track, 15)
+
+	local knob = Instance.new("Frame")
+	knob.Size = UDim2.new(0, 24, 0, 24)
+	knob.Position = default and UDim2.new(1, -27, 0.5, -12) or UDim2.new(0, 3, 0.5, -12)
+	knob.BackgroundColor3 = Color3.new(1,1,1)
+	knob.BorderSizePixel = 0
+	knob.Parent = track
+	corner(knob, 12)
+
+	local state = default
+	track.Activated:Connect(function()
+		state = not state
+		callback(state)
+		tween(track, {BackgroundColor3 = state and Theme.Success or Theme.Border}, 0.2)
+		tween(knob, {Position = state and UDim2.new(1,-27,0.5,-12) or UDim2.new(0,3,0.5,-12)}, 0.2)
+	end)
+	return frame
+end
+
+-- Button (big touch target)
+function MGui.Button(parent, text, color, callback, order)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, 0, 0, 52)
+	btn.BackgroundColor3 = color
+	btn.BorderSizePixel = 0
+	btn.Text = text
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 17
+	btn.TextColor3 = Color3.new(1,1,1)
+	btn.AutoButtonColor = false
+	btn.LayoutOrder = order
+	btn.Parent = parent
+	corner(btn, 14)
+	gradient(btn, color, Theme.Cyan, 90)
+
+	btn.Activated:Connect(function()
+		tween(btn, {BackgroundColor3 = Theme.Border}, 0.08)
+		task.delay(0.15, function() if btn and btn.Parent then tween(btn, {BackgroundColor3 = color}, 0.15) end end)
+		callback()
+	end)
+	return btn
+end
+
+-- Section header
+function MGui.SectionHeader(parent, title, order)
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.new(1, 0, 0, 28)
+	lbl.BackgroundTransparency = 1
+	lbl.Text = title
+	lbl.Font = Enum.Font.GothamBold
+	lbl.TextSize = 15
+	lbl.TextColor3 = Theme.Cyan
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.LayoutOrder = order
+	lbl.Parent = parent
+	local pad = Instance.new("UIPadding"); pad.PaddingLeft = UDim.new(0,4); pad.Parent = lbl
+	return lbl
+end
+
+-- Info text block
+function MGui.InfoBlock(parent, text, order)
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(1, 0, 0, 0)
+	frame.AutomaticSize = Enum.AutomaticSize.Y
+	frame.BackgroundColor3 = Color3.fromRGB(22, 18, 38)
+	frame.BorderSizePixel = 0
+	frame.LayoutOrder = order
+	frame.Parent = parent
+	corner(frame, 12)
+	stroke(frame, Theme.Border, 1)
+
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.new(1, -24, 0, 0)
+	lbl.AutomaticSize = Enum.AutomaticSize.Y
+	lbl.Position = UDim2.new(0, 12, 0, 10)
+	lbl.BackgroundTransparency = 1
+	lbl.Text = text
+	lbl.Font = Enum.Font.Gotham
+	lbl.TextSize = 13
+	lbl.TextColor3 = Theme.TextDim
+	lbl.TextWrapped = true
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.TextYAlignment = Enum.TextYAlignment.Top
+	lbl.Parent = frame
+
+	-- bottom padding spacer
+	local sp = Instance.new("Frame"); sp.Size = UDim2.new(1,0,0,10); sp.BackgroundTransparency=1; sp.Parent = frame
+	return frame
+end
+
+-- Slider (touch-friendly with large handle)
+function MGui.Slider(parent, label, min, max, default, callback, order, dec)
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(1, 0, 0, 72)
+	frame.BackgroundColor3 = Theme.Card
+	frame.BorderSizePixel = 0
+	frame.LayoutOrder = order
+	frame.Parent = parent
+	corner(frame, 14)
+	stroke(frame, Theme.Border, 1)
+
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.new(0.7, -20, 0, 26)
+	lbl.Position = UDim2.new(0, 16, 0, 8)
+	lbl.BackgroundTransparency = true
+	lbl.Text = label
+	lbl.Font = Enum.Font.GothamBold
+	lbl.TextSize = 15
+	lbl.TextColor3 = Theme.Text
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.Parent = frame
+
+	local valLbl = Instance.new("TextLabel")
+	valLbl.Size = UDim2.new(0.3, -20, 0, 26)
+	valLbl.Position = UDim2.new(0.7, 4, 0, 8)
+	valLbl.BackgroundTransparency = true
+	valLbl.Text = dec and string.format("%."..dec.."f", default) or tostring(math.floor(default))
+	valLbl.Font = Enum.Font.GothamBold
+	valLbl.TextSize = 15
+	valLbl.TextColor3 = Theme.Cyan
+	valLbl.TextXAlignment = Enum.TextXAlignment.Right
+	valLbl.Parent = frame
+
+	local track = Instance.new("Frame")
+	track.Size = UDim2.new(1, -32, 0, 8)
+	track.Position = UDim2.new(0, 16, 0, 50)
+	track.BackgroundColor3 = Theme.Border
+	track.BorderSizePixel = 0
+	track.Parent = frame
+	corner(track, 4)
+
+	local fill = Instance.new("Frame")
+	fill.Size = UDim2.new((default-min)/(max-min), 0, 1, 0)
+	fill.BackgroundColor3 = Theme.Primary
+	fill.BorderSizePixel = 0
+	fill.Parent = track
+	corner(fill, 4)
+	gradient(fill, Theme.Primary, Theme.Cyan)
+
+	local handle = Instance.new("Frame")
+	handle.Size = UDim2.new(0, 28, 0, 28)
+	handle.Position = UDim2.new((default-min)/(max-min), -14, 0.5, -14)
+	handle.BackgroundColor3 = Color3.new(1,1,1)
+	handle.BorderSizePixel = 0
+	handle.Parent = track
+	corner(handle, 14)
+	stroke(handle, Theme.Primary, 3)
+
+	local dragging = false
+	local function updateSlider(pos)
+		local rel = math.clamp((pos.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+		local val = min + (max - min) * rel
+		valLbl.Text = dec and string.format("%."..dec.."f", val) or tostring(math.floor(val))
+		fill.Size = UDim2.new(rel, 0, 1, 0)
+		handle.Position = UDim2.new(rel, -14, 0.5, -14)
+		callback(val)
+	end
+
+	-- Touch events on handle
+	handle.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = true
+		end
+	end)
+	handle.InputEnded:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = false
+		end
+	end)
+	-- Also tap anywhere on track
+	track.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
+			updateSlider(i.Position)
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(i)
+		if dragging and (i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseMovement) then
+			updateSlider(i.Position)
+		end
+	end)
+	return frame
+end
+
+-- ============================================================
+-- TAB CONTENT BUILDERS
+-- ============================================================
+local Tabs = {}
+
+function Tabs.Home(parent)
+	MGui.SectionHeader(parent, "🏠  Welcome", 1)
+	MGui.InfoBlock(parent,
+		"🤖 OpAiHubVoxy Mobile\n" ..
+		"🎮 Game: " .. GameDetector.CurrentGame .. "\n" ..
+		"👥 Players: " .. #Players:GetPlayers() .. "\n\n" ..
+		"Use the bottom nav to switch tabs.\nTap the AIM button while playing to lock onto enemies.",
+	2)
+
+	MGui.SectionHeader(parent, "⚡  Quick Enable", 10)
+	MGui.Button(parent, "🎯  Aimbot ON", Theme.Primary, function()
+		C.Aimbot.Enabled = true
+		print("[OpAiHubVoxy] ✅ Aimbot ON — use the AIM button in-game!")
+	end, 11)
+	MGui.Button(parent, "👁️  Full ESP ON", Theme.Cyan, function()
+		C.ESP.Enabled = true; C.ESP.Boxes = true; C.ESP.Names = true
+		C.ESP.Tracers = true; C.ESP.Distance = true; C.ESP.Health = true
+		ESP.Init()
+		print("[OpAiHubVoxy] ✅ Full ESP enabled!")
+	end, 12)
+	MGui.Button(parent, "🚀  Flight ON", Theme.Magenta, function()
+		C.Move.Flight = true; Movement.Flight(true)
+		print("[OpAiHubVoxy] ✅ Flight ON — move with thumbstick!")
+	end, 13)
+	MGui.Button(parent, "👻  Invisibility", Theme.Warning, function()
+		print("[OpAiHubVoxy] Loading invisibility...")
+		local ok = pcall(function() loadstring(game:HttpGet('https://pastebin.com/raw/3Rnd9rHf'))() end)
+		print(ok and "[OpAiHubVoxy] ✅ Invisible!" or "[OpAiHubVoxy] ❌ Invis failed")
+	end, 14)
+end
+
+function Tabs.Aimbot(parent)
+	MGui.SectionHeader(parent, "🎯  Aimbot", 1)
+	MGui.Toggle(parent, "Enable Aimbot", C.Aimbot.Enabled, function(v)
+		C.Aimbot.Enabled = v
+		print("[Aimbot] " .. (v and "ON" or "OFF"))
+	end, 2)
+	MGui.Toggle(parent, "Team Check", C.Aimbot.TeamCheck, function(v) C.Aimbot.TeamCheck = v end, 3)
+
+	MGui.SectionHeader(parent, "⚙️  Settings", 20)
+	MGui.Slider(parent, "FOV", 50, 400, C.Aimbot.FOV, function(v) C.Aimbot.FOV = v end, 21)
+	MGui.Slider(parent, "Smoothness", 0.01, 1.0, C.Aimbot.Smooth, function(v) C.Aimbot.Smooth = v end, 22, 2)
+	MGui.Slider(parent, "Prediction", 0.05, 0.5, C.Aimbot.Prediction, function(v) C.Aimbot.Prediction = v end, 23, 2)
+
+	MGui.SectionHeader(parent, "ℹ️  How It Works", 30)
+	MGui.InfoBlock(parent,
+		"• Press the AIM button on screen while playing\n" ..
+		"• Aimbot locks onto the nearest enemy head\n" ..
+		"• Release to stop aiming\n" ..
+		"• Lower smoothness = snappier aim\n" ..
+		"• Higher prediction = better vs moving targets",
+	31)
+end
+
+function Tabs.ESP(parent)
+	MGui.SectionHeader(parent, "👁️  ESP", 1)
+	MGui.Toggle(parent, "Enable ESP", C.ESP.Enabled, function(v)
+		C.ESP.Enabled = v
+		if v then ESP.Init() else
+			for p,_ in pairs(State.ESP) do ESP.Hide(p) end
+		end
+		print("[ESP] " .. (v and "ON" or "OFF"))
+	end, 2)
+	MGui.Toggle(parent, "Boxes", C.ESP.Boxes, function(v) C.ESP.Boxes = v end, 3)
+	MGui.Toggle(parent, "Tracers", C.ESP.Tracers, function(v) C.ESP.Tracers = v end, 4)
+	MGui.Toggle(parent, "Names", C.ESP.Names, function(v) C.ESP.Names = v end, 5)
+	MGui.Toggle(parent, "Distance", C.ESP.Distance, function(v) C.ESP.Distance = v end, 6)
+	MGui.Toggle(parent, "Health Bars", C.ESP.Health, function(v) C.ESP.Health = v end, 7)
+	MGui.Toggle(parent, "Team Check", C.ESP.TeamCheck, function(v) C.ESP.TeamCheck = v end, 8)
+
+	MGui.SectionHeader(parent, "⚙️  Settings", 20)
+	MGui.Slider(parent, "Max Distance", 500, 5000, C.ESP.MaxDist, function(v) C.ESP.MaxDist = v end, 21)
+end
+
+function Tabs.Combat(parent)
+	MGui.SectionHeader(parent, "⚔️  Combat", 1)
+	MGui.Toggle(parent, "Infinite Ammo", C.Combat.InfAmmo, function(v) C.Combat.InfAmmo = v end, 2)
+	MGui.Toggle(parent, "No Recoil", C.Combat.NoRecoil, function(v) C.Combat.NoRecoil = v end, 3)
+	MGui.Toggle(parent, "No Spread", C.Combat.NoSpread, function(v) C.Combat.NoSpread = v end, 4)
+	MGui.Toggle(parent, "Rapid Fire", C.Combat.RapidFire, function(v) C.Combat.RapidFire = v end, 5)
+	MGui.Toggle(parent, "Auto Shoot", C.Combat.AutoShoot, function(v) C.Combat.AutoShoot = v end, 6)
+
+	MGui.SectionHeader(parent, "🛡️  God Mode", 20)
+	MGui.Button(parent, "🛡️  Activate God Mode", Theme.Success, function()
+		local char = LocalPlayer.Character
+		if not char then print("[GodMode] ❌ No character"); return end
+		local hum = char:FindFirstChild("Humanoid")
+		local methods = 0
+		pcall(function() if hum then hum.MaxHealth = math.huge; hum.Health = math.huge; methods=methods+1 end end)
+		pcall(function()
+			if getconnections and hum then
+				for _,c in pairs(getconnections(hum.HealthChanged)) do c:Disable() end
+				for _,c in pairs(getconnections(hum.Died)) do c:Disable() end
+				methods=methods+1
+			end
+		end)
+		pcall(function()
+			if hookmetamethod then
+				local old; old = hookmetamethod(game, "__namecall", function(self,...)
+					local m = getnamecallmethod()
+					if m=="FireServer" then local n=tostring(self); if n:find("Damage") or n:find("TakeDamage") or n:find("Health") then return end end
+					return old(self,...)
+				end); methods=methods+1
+			end
+		end)
+		pcall(function()
+			local ff = Instance.new("ForceField"); ff.Visible=false; ff.Parent=char; methods=methods+1
+		end)
+		pcall(function()
+			for _,p in pairs(char:GetDescendants()) do if p:IsA("BasePart") then p:SetNetworkOwner(nil) end end; methods=methods+1
+		end)
+		print(string.format("[GodMode] ✅ Active (%d/5 methods)", methods))
+	end, 21)
+
+	MGui.SectionHeader(parent, "👻  Invisibility", 30)
+	MGui.Button(parent, "👻  Go Invisible", Theme.Primary, function()
+		print("[Invis] Loading...")
+		local ok, err = pcall(function() loadstring(game:HttpGet('https://pastebin.com/raw/3Rnd9rHf'))() end)
+		if ok then
+			print("[Invis] ✅ Invisible!")
+		else
+			print("[Invis] ❌ Failed: " .. tostring(err))
+			-- fallback
+			local char = LocalPlayer.Character
+			if char then
+				for _,p in pairs(char:GetDescendants()) do
+					if p:IsA("BasePart") then p.Transparency=1; p.CanCollide=false
+					elseif p:IsA("Decal") then p.Transparency=1 end
+				end
+				local h = char:FindFirstChild("Humanoid")
+				if h then h.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None end
+				print("[Invis] ✅ Fallback invisibility applied")
+			end
+		end
+	end, 31)
+
+	MGui.Button(parent, "🔄  Respawn", Theme.Danger, function()
+		if LocalPlayer.Character then LocalPlayer.Character:BreakJoints() end
+		print("[OpAiHubVoxy] Respawning...")
+	end, 40)
+end
+
+function Tabs.Movement(parent)
+	MGui.SectionHeader(parent, "🏃  Movement", 1)
+	MGui.Slider(parent, "Walk Speed", 16, 300, C.Move.Speed, function(v) C.Move.Speed = v; Movement.SetSpeed() end, 2)
+	MGui.Slider(parent, "Jump Power", 50, 500, C.Move.Jump, function(v) C.Move.Jump = v; Movement.SetJump() end, 3)
+	MGui.Toggle(parent, "Flight", C.Move.Flight, function(v) C.Move.Flight = v; Movement.Flight(v) end, 4)
+	MGui.Slider(parent, "Flight Speed", 50, 300, C.Move.FlightSpeed, function(v) C.Move.FlightSpeed = v end, 5)
+	MGui.Toggle(parent, "NoClip", C.Move.NoClip, function(v) C.Move.NoClip = v; Movement.NoClip(v) end, 6)
+	MGui.Toggle(parent, "Infinite Jump", C.Move.InfJump, function(v) C.Move.InfJump = v end, 7)
+
+	MGui.SectionHeader(parent, "📍  Teleport", 20)
+	-- player name input
+	local inputFrame = Instance.new("Frame")
+	inputFrame.Size = UDim2.new(1,0,0,52)
+	inputFrame.BackgroundColor3 = Theme.Card
+	inputFrame.BorderSizePixel = 0
+	inputFrame.LayoutOrder = 21
+	inputFrame.Parent = parent
+	corner(inputFrame, 14)
+	stroke(inputFrame, Theme.Border)
+
+	local tbox = Instance.new("TextBox")
+	tbox.Size = UDim2.new(1, -24, 1, 0)
+	tbox.Position = UDim2.new(0, 12, 0, 0)
+	tbox.BackgroundTransparency = 1
+	tbox.Text = ""
+	tbox.PlaceholderText = "Player name..."
+	tbox.Font = Enum.Font.GothamMedium
+	tbox.TextSize = 16
+	tbox.TextColor3 = Theme.Text
+	tbox.PlaceholderColor3 = Theme.TextDim
+	tbox.ClearTextOnFocus = false
+	tbox.Parent = inputFrame
+
+	local selPlayer = ""
+	tbox.FocusLost:Connect(function() selPlayer = tbox.Text end)
+
+	MGui.Button(parent, "📍  Teleport to Player", Theme.Primary, function()
+		selPlayer = tbox.Text
+		if selPlayer == "" then print("[Teleport] Enter a name!"); return end
+		local tp = Players:FindFirstChild(selPlayer)
+		if tp and tp.Character then
+			local tr = tp.Character:FindFirstChild("HumanoidRootPart")
+			local mr = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+			if tr and mr then mr.CFrame = tr.CFrame; print("[Teleport] ✅ Teleported to " .. selPlayer) end
+		else print("[Teleport] ❌ Player not found") end
+	end, 22)
+
+	MGui.Button(parent, "🌪️  Fling Player", Theme.Warning, function()
+		selPlayer = tbox.Text
+		if selPlayer == "" then return end
+		local tp = Players:FindFirstChild(selPlayer)
+		if tp and tp.Character then
+			local tr = tp.Character:FindFirstChild("HumanoidRootPart")
+			if tr then
+				local bv = Instance.new("BodyVelocity")
+				bv.MaxForce = Vector3.new(1e5,1e5,1e5)
+				bv.Velocity = Vector3.new(0,250,0)
+				bv.Parent = tr
+				task.delay(0.1, function() bv:Destroy() end)
+				print("[Fling] ✅ Flung " .. selPlayer)
+			end
+		end
+	end, 23)
+end
+
+function Tabs.Visual(parent)
+	MGui.SectionHeader(parent, "🎨  Visuals", 1)
+	MGui.Toggle(parent, "Fullbright", C.Visual.Fullbright, function(v) C.Visual.Fullbright = v; applyFullbright(v) end, 2)
+	MGui.Toggle(parent, "No Fog", C.Visual.NoFog, function(v) C.Visual.NoFog = v; applyNoFog(v) end, 3)
+end
+
+function Tabs.Game(parent)
+	MGui.SectionHeader(parent, "🎮  " .. GameDetector.CurrentGame, 1)
+	if GameDetector.CurrentGame == "Arsenal" then
+		MGui.Toggle(parent, "Auto Buy Guns", false, function(v) end, 2)
+		MGui.Toggle(parent, "Instant Respawn", false, function(v) end, 3)
+	elseif GameDetector.CurrentGame == "Rivals" then
+		MGui.Toggle(parent, "Auto Parry", false, function(v) end, 2)
+		MGui.Toggle(parent, "Infinite Stamina", false, function(v) end, 3)
+	elseif GameDetector.CurrentGame == "Zombie Uprising" then
+		MGui.Toggle(parent, "Infinite Health", false, function(v) end, 2)
+		MGui.Toggle(parent, "One Hit Kill", false, function(v) end, 3)
+		MGui.Toggle(parent, "Auto Kill Zombies", false, function(v) end, 4)
+	else
+		MGui.InfoBlock(parent, "Universal mode.\n\nGame-specific features available for:\n• Arsenal\n• Rivals\n• Zombie Uprising", 2)
+	end
+end
+
+-- ============================================================
+-- MAIN MOBILE GUI
+-- ============================================================
+local GUI = {}
+
+function GUI.BuildKeyScreen()
+	local sg = Instance.new("ScreenGui")
+	sg.Name = "OpAiHubVoxyKey"
+	sg.ResetOnSpawn = false
+	sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	sg.Parent = game.CoreGui
+
+	-- full bg
+	local bg = Instance.new("Frame")
+	bg.Size = UDim2.new(1,0,1,0)
+	bg.BackgroundColor3 = Color3.new(0,0,0)
+	bg.BackgroundTransparency = 0.2
+	bg.BorderSizePixel = 0
+	bg.Parent = sg
+
+	-- card — use scale so it fits any phone/tablet
+	local card = Instance.new("Frame")
+	card.Size = UDim2.new(0.88, 0, 0, 0)
+	card.AutomaticSize = Enum.AutomaticSize.Y
+	card.Position = UDim2.new(0.06, 0, 0.5, 0) -- centered vertically via script below
+	card.BackgroundColor3 = Theme.BG
+	card.BorderSizePixel = 0
+	card.Parent = bg
+	corner(card, 24)
+	stroke(card, Theme.Primary, 2)
+
+	-- logo circle
+	local logo = Instance.new("Frame")
+	logo.Size = UDim2.new(0, 80, 0, 80)
+	logo.Position = UDim2.new(0.5, -40, 0, 28)
+	logo.BackgroundColor3 = Theme.Primary
+	logo.BorderSizePixel = 0
+	logo.Parent = card
+	corner(logo, 40)
+	gradient(logo, Theme.Primary, Theme.Cyan)
+
+	local logoTxt = Instance.new("TextLabel")
+	logoTxt.Size = UDim2.new(1,0,1,0)
+	logoTxt.BackgroundTransparency = true
+	logoTxt.Text = "AI"
+	logoTxt.Font = Enum.Font.GothamBold
+	logoTxt.TextSize = 36
+	logoTxt.TextColor3 = Color3.new(1,1,1)
+	logoTxt.Parent = logo
+
+	-- title
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(1, -40, 0, 36)
+	title.Position = UDim2.new(0, 20, 0, 118)
+	title.BackgroundTransparency = true
+	title.Text = "OPAIHUBVOXY"
+	title.Font = Enum.Font.GothamBold
+	title.TextSize = 28
+	title.TextColor3 = Color3.new(1,1,1)
+	title.Parent = card
+
+	local sub = Instance.new("TextLabel")
+	sub.Size = UDim2.new(1, -40, 0, 22)
+	sub.Position = UDim2.new(0, 20, 0, 154)
+	sub.BackgroundTransparency = true
+	sub.Text = "Mobile • AI-Powered Hub • v2.0"
+	sub.Font = Enum.Font.Gotham
+	sub.TextSize = 13
+	sub.TextColor3 = Theme.TextDim
+	sub.Parent = card
+
+	-- discord btn
+	local discBtn = Instance.new("TextButton")
+	discBtn.Size = UDim2.new(1, -40, 0, 50)
+	discBtn.Position = UDim2.new(0, 20, 0, 190)
+	discBtn.BackgroundColor3 = Theme.Surface
+	discBtn.BorderSizePixel = 0
+	discBtn.Text = "🔗  Get Key (Discord)"
+	discBtn.Font = Enum.Font.GothamBold
+	discBtn.TextSize = 16
+	discBtn.TextColor3 = Theme.Cyan
+	discBtn.AutoButtonColor = false
+	discBtn.Parent = card
+	corner(discBtn, 14)
+	stroke(discBtn, Theme.Cyan, 2)
+	discBtn.Activated:Connect(function()
+		discBtn.Text = "✅  Copied!"
+		if setclipboard then setclipboard("https://discord.gg/v89MSdzjtE") end
+		task.delay(2, function() if discBtn and discBtn.Parent then discBtn.Text = "🔗  Get Key (Discord)" end end)
+	end)
+
+	-- key input
+	local inputBg = Instance.new("Frame")
+	inputBg.Size = UDim2.new(1, -40, 0, 56)
+	inputBg.Position = UDim2.new(0, 20, 0, 254)
+	inputBg.BackgroundColor3 = Theme.Surface
+	inputBg.BorderSizePixel = 0
+	inputBg.Parent = card
+	corner(inputBg, 14)
+	stroke(inputBg, Theme.Border, 2)
+
+	local keyBox = Instance.new("TextBox")
+	keyBox.Size = UDim2.new(1, -24, 1, 0)
+	keyBox.Position = UDim2.new(0, 12, 0, 0)
+	keyBox.BackgroundTransparency = true
+	keyBox.Text = ""
+	keyBox.PlaceholderText = "Enter key here..."
+	keyBox.Font = Enum.Font.GothamMedium
+	keyBox.TextSize = 18
+	keyBox.TextColor3 = Color3.new(1,1,1)
+	keyBox.PlaceholderColor3 = Theme.TextDim
+	keyBox.ClearTextOnFocus = false
+	keyBox.Parent = inputBg
+
+	-- verify btn
+	local verifyBtn = Instance.new("TextButton")
+	verifyBtn.Size = UDim2.new(1, -40, 0, 56)
+	verifyBtn.Position = UDim2.new(0, 20, 0, 326)
+	verifyBtn.BackgroundColor3 = Theme.Primary
+	verifyBtn.BorderSizePixel = 0
+	verifyBtn.Text = "VERIFY & LAUNCH"
+	verifyBtn.Font = Enum.Font.GothamBold
+	verifyBtn.TextSize = 19
+	verifyBtn.TextColor3 = Color3.new(1,1,1)
+	verifyBtn.AutoButtonColor = false
+	verifyBtn.Parent = card
+	corner(verifyBtn, 14)
+	gradient(verifyBtn, Theme.Primary, Theme.Cyan)
+
+	-- bottom spacer
+	local spacer = Instance.new("Frame")
+	spacer.Size = UDim2.new(1, 0, 0, 24)
+	spacer.Position = UDim2.new(0, 0, 0, 382)
+	spacer.BackgroundTransparency = true
+	spacer.Parent = card
+
+	-- center card vertically
+	local function centerCard()
+		card.Position = UDim2.new(0.06, 0, 0.5, -card.AbsoluteSize.Y / 2)
+	end
+	task.delay(0.1, centerCard)
+	card.PropertyChanged:Connect(function(p) if p == "AbsoluteSize" then centerCard() end end)
+
+	local function verify()
+		if keyBox.Text == KeySystem.CorrectKey then
+			KeySystem.Authenticated = true
+			verifyBtn.Text = "✅  ACCESS GRANTED!"
+			verifyBtn.BackgroundColor3 = Theme.Success
+			task.delay(0.8, function()
+				-- fade
+				for i = 0, 10 do
+					bg.BackgroundTransparency = 0.2 + 0.8 * (i/10)
+					card.BackgroundTransparency = i/10
+					logoTxt.TextTransparency = i/10
+					title.TextTransparency = i/10
+					sub.TextTransparency = i/10
+					verifyBtn.TextTransparency = i/10
+					task.wait(0.03)
+				end
+				sg:Destroy()
+				-- boot
+				GameDetector.Detect()
+				ESP.Init()
+				Movement.InfJump()
+				GUI.BuildMain()
+			end)
+		else
+			verifyBtn.Text = "❌  INVALID KEY"
+			verifyBtn.BackgroundColor3 = Theme.Danger
+			keyBox.Text = ""
+			task.delay(1.5, function()
+				if verifyBtn and verifyBtn.Parent then
+					verifyBtn.Text = "VERIFY & LAUNCH"
+					verifyBtn.BackgroundColor3 = Theme.Primary
+				end
+			end)
+		end
+	end
+
+	verifyBtn.Activated:Connect(verify)
+	keyBox.FocusLost:Connect(function(enter) if enter then verify() end end)
+	return sg
+end
+
+function GUI.BuildMain()
+	local sg = Instance.new("ScreenGui")
+	sg.Name = "OpAiHubVoxyMobile"
+	sg.ResetOnSpawn = false
+	sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	sg.Parent = game.CoreGui
+	GUI.ScreenGui = sg
+
+	-- ── TOGGLE BUTTON (top-left, always visible) ──
+	local toggleBtn = Instance.new("TextButton")
+	toggleBtn.Size = UDim2.new(0, 44, 0, 44)
+	toggleBtn.Position = UDim2.new(0, 8, 0, 8)
+	toggleBtn.BackgroundColor3 = Theme.Primary
+	toggleBtn.BorderSizePixel = 0
+	toggleBtn.Text = "☰"
+	toggleBtn.Font = Enum.Font.GothamBold
+	toggleBtn.TextSize = 22
+	toggleBtn.TextColor3 = Color3.new(1,1,1)
+	toggleBtn.AutoButtonColor = false
+	toggleBtn.ZIndex = 10
+	toggleBtn.Parent = sg
+	corner(toggleBtn, 12)
+
+	-- ── AIM BUTTON (bottom-right, in-game aimbot trigger) ──
+	local aimBtn = Instance.new("TextButton")
+	aimBtn.Size = UDim2.new(0, 72, 0, 72)
+	aimBtn.Position = UDim2.new(1, -88, 1, -88)
+	aimBtn.BackgroundColor3 = Theme.Primary
+	aimBtn.BorderSizePixel = 0
+	aimBtn.Text = "🎯"
+	aimBtn.Font = Enum.Font.GothamBold
+	aimBtn.TextSize = 30
+	aimBtn.TextColor3 = Color3.new(1,1,1)
+	aimBtn.AutoButtonColor = false
+	aimBtn.ZIndex = 10
+	aimBtn.Parent = sg
+	corner(aimBtn, 36)
+	stroke(aimBtn, Theme.Cyan, 3)
+
+	-- ring around aim button
+	local aimRing = Instance.new("Frame")
+	aimRing.Size = UDim2.new(0, 84, 0, 84)
+	aimRing.Position = UDim2.new(1, -94, 1, -94)
+	aimRing.BackgroundTransparency = true
+	aimRing.BorderSizePixel = 0
+	aimRing.ZIndex = 9
+	aimRing.Parent = sg
+	corner(aimRing, 42)
+	stroke(aimRing, Theme.Cyan, 2)
+
+	-- ── MAIN PANEL ──
+	local panel = Instance.new("Frame")
+	panel.Name = "Panel"
+	panel.Size = UDim2.new(1, 0, 1, -60) -- leaves room for bottom nav
+	panel.BackgroundColor3 = Theme.BG
+	panel.BorderSizePixel = 0
+	panel.Parent = sg
+	GUI.Panel = panel
+
+	-- header bar
+	local header = Instance.new("Frame")
+	header.Size = UDim2.new(1, 0, 0, 48)
+	header.BackgroundColor3 = Theme.Surface
+	header.BorderSizePixel = 0
+	header.Parent = panel
+
+	local headerTitle = Instance.new("TextLabel")
+	headerTitle.Size = UDim2.new(1, -100, 1, 0)
+	headerTitle.Position = UDim2.new(0, 56, 0, 0)
+	headerTitle.BackgroundTransparency = true
+	headerTitle.Text = "OPAIHUBVOXY"
+	headerTitle.Font = Enum.Font.GothamBold
+	headerTitle.TextSize = 20
+	headerTitle.TextColor3 = Color3.new(1,1,1)
+	headerTitle.TextXAlignment = Enum.TextXAlignment.Left
+	headerTitle.Parent = header
+
+	local closeBtn = Instance.new("TextButton")
+	closeBtn.Size = UDim2.new(0, 38, 0, 38)
+	closeBtn.Position = UDim2.new(1, -44, 0.5, -19)
+	closeBtn.BackgroundColor3 = Theme.Danger
+	closeBtn.BorderSizePixel = 0
+	closeBtn.Text = "×"
+	closeBtn.Font = Enum.Font.GothamBold
+	closeBtn.TextSize = 24
+	closeBtn.TextColor3 = Color3.new(1,1,1)
+	closeBtn.AutoButtonColor = false
+	closeBtn.Parent = header
+	corner(closeBtn, 10)
+
+	-- ── SCROLLABLE CONTENT AREA ──
+	local contentArea = Instance.new("Frame")
+	contentArea.Size = UDim2.new(1, 0, 1, -108) -- 48 header + 60 nav
+	contentArea.Position = UDim2.new(0, 0, 0, 48)
+	contentArea.BackgroundTransparency = true
+	contentArea.Parent = panel
+	GUI.ContentArea = contentArea
+
+	-- create tab scroll frames
+	local tabNames = {"Home","Aimbot","ESP","Combat","Movement","Visual","Game"}
+	for i, name in ipairs(tabNames) do
+		local scroll = Instance.new("ScrollingFrame")
+		scroll.Name = name .. "Tab"
+		scroll.Size = UDim2.new(1, 0, 1, 0)
+		scroll.BackgroundTransparency = true
+		scroll.BorderSizePixel = 0
+		scroll.ScrollBarThickness = 0
+		scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+		scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+		scroll.Visible = (i == 1)
+		scroll.Parent = contentArea
+		State.TabFrames[name] = scroll
+
+		local pad = Instance.new("UIPadding")
+		pad.PaddingTop = UDim.new(0, 12)
+		pad.PaddingBottom = UDim.new(0, 80)
+		pad.PaddingLeft = UDim.new(0, 12)
+		pad.PaddingRight = UDim.new(0, 12)
+		pad.Parent = scroll
+
+		local layout = Instance.new("UIListLayout")
+		layout.Padding = UDim.new(0, 8)
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
+		layout.Parent = scroll
+
+		-- populate
+		if Tabs[name] then Tabs[name](scroll) end
+	end
+
+	-- ── BOTTOM NAV BAR ──
+	local navBar = Instance.new("Frame")
+	navBar.Size = UDim2.new(1, 0, 0, 60)
+	navBar.Position = UDim2.new(0, 0, 1, -60)
+	navBar.BackgroundColor3 = Theme.NavBG
+	navBar.BorderSizePixel = 0
+	navBar.ZIndex = 5
+	navBar.Parent = sg
+	-- top edge line
+	stroke(navBar, Theme.Border, 1)
+
+	local navItems = {
+		{Name="Home", Icon="🏠"},
+		{Name="Aimbot", Icon="🎯"},
+		{Name="ESP", Icon="👁️"},
+		{Name="Combat", Icon="⚔️"},
+		{Name="Move", Icon="🏃", Tab="Movement"},
+		{Name="Visual", Icon="🎨"},
+		{Name="Game", Icon="🎮"},
+	}
+
+	local navLayout = Instance.new("UIListLayout")
+	navLayout.FillDirection = Enum.FillDirection.Horizontal
+	navLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	navLayout.Padding = UDim.new(0, 2)
+	navLayout.Parent = navBar
+
+	for i, item in ipairs(navItems) do
+		local tabKey = item.Tab or item.Name
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(1/#navItems, -4, 1, -8)
+		btn.Position = UDim2.new(0, 0, 0, 4)
+		btn.BackgroundColor3 = (i==1) and Theme.Primary or Color3.new(0,0,0)
+		btn.BackgroundTransparency = (i==1) and 0.3 or 1
+		btn.BorderSizePixel = 0
+		btn.Text = item.Icon .. "\n" .. item.Name
+		btn.Font = Enum.Font.GothamBold
+		btn.TextSize = 9
+		btn.TextColor3 = (i==1) and Color3.new(1,1,1) or Theme.TextDim
+		btn.AutoButtonColor = false
+		btn.Parent = navBar
+		corner(btn, 10)
+
+		State.MenuButtons[tabKey] = btn
+
+		btn.Activated:Connect(function()
+			-- reset all
+			for _, b in pairs(State.MenuButtons) do
+				b.BackgroundTransparency = 1
+				b.TextColor3 = Theme.TextDim
+			end
+			-- highlight
+			btn.BackgroundTransparency = 0.3
+			btn.BackgroundColor3 = Theme.Primary
+			btn.TextColor3 = Color3.new(1,1,1)
+			-- switch tabs
+			for _, tf in pairs(State.TabFrames) do tf.Visible = false end
+			if State.TabFrames[tabKey] then State.TabFrames[tabKey].Visible = true end
+			State.CurrentTab = tabKey
+		end)
+	end
+
+	-- ── TOGGLE / CLOSE LOGIC ──
+	local panelVisible = true
+	local function setPanelVisible(v)
+		panelVisible = v
+		panel.Visible = v
+		navBar.Visible = v
+		toggleBtn.Text = v and "☰" or "🔒"
+	end
+
+	toggleBtn.Activated:Connect(function()
+		setPanelVisible(not panelVisible)
+	end)
+	closeBtn.Activated:Connect(function()
+		setPanelVisible(false)
+	end)
+
+	-- ── AIM BUTTON LOGIC ──
+	aimBtn.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Touch then
+			C.Aimbot.Active = true
+		end
+	end)
+	aimBtn.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Touch then
+			C.Aimbot.Active = false
+		end
+	end)
+
+	-- ── MAIN LOOP ──
+	local loop = RunService.RenderStepped:Connect(function()
+		-- ESP update
+		if C.ESP.Enabled then
+			for _, p in ipairs(Players:GetPlayers()) do
+				if p ~= LocalPlayer then ESP.Update(p) end
+			end
+		end
+		-- Aimbot (while AIM button held)
+		if C.Aimbot.Enabled and C.Aimbot.Active then
+			local target = Aimbot.GetTarget()
+			if target then Aimbot.AimAt(target) end
+		end
+	end)
+	table.insert(State.Connections, loop)
+
+	print("[OpAiHubVoxy] ✅ Mobile hub ready!")
+	print("[OpAiHubVoxy] 🎯 Press the AIM button to use aimbot")
+	print("[OpAiHubVoxy] ☰ Tap top-left to open/close menu")
+end
+
+-- ============================================================
+-- BOOT
+-- ============================================================
+print("═══════════════════════════════════════")
+print("  OPAIHUBVOXY MOBILE v2.0")
+print("  AI-Powered Multi-Game Hub")
+print("═══════════════════════════════════════")
+
+GUI.BuildKeyScreen()
