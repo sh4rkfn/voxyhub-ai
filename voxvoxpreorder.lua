@@ -1,15 +1,11 @@
 --[[
     ═══════════════════════════════════════════════════════════
-    VOXY OP HUB - ULTIMATE EDITION
+    VOXY OP HUB - PRENIUM EDITION
     Version: 1.0
-    Author: VoxyHub Team
-    
-    Features: No Recoil, No Spread, ESP, Wallhack, NoClip, 
-             Teleport, Player Troll, Kick Players, and more!
     License: Premium
     ═══════════════════════════════════════════════════════════
 ]]
-
+s
 -- ============================================================
 -- SERVICES & DEPENDENCIES
 -- ============================================================
@@ -43,7 +39,7 @@ local Mouse = LocalPlayer:GetMouse()
 local Config = {
     -- System Settings
     Version = "1.0",
-    Name = "Voxy OP Hub",
+    Name = "Voxy AI Hub",
     
     -- Combat Settings
     NoRecoil = false,
@@ -52,7 +48,7 @@ local Config = {
     RapidFire = false,
     AimbotEnabled = false,
     AimbotFOV = 150,
-    AimbotSmoothing = 0.2,
+    AimbotSmoothing = 0.5,
     AimbotTeamCheck = true,
     AimbotKey = Enum.UserInputType.MouseButton2, -- Right click to aim
     AimbotKeyHold = false,
@@ -2156,7 +2152,7 @@ function GUI.CreateTrollTab(parent)
     warningLabel.Size = UDim2.new(1, 0, 0, 40)
     warningLabel.BackgroundColor3 = Config.Theme.Primary
     warningLabel.BorderSizePixel = 0
-    warningLabel.Text = "⚠️ Warning: Some features may not work in all games"
+    warningLabel.Text = "Warning: Some features may not work in all games so fucking expect some not to work"
     warningLabel.Font = Enum.Font.Gotham
     warningLabel.TextSize = 10
     warningLabel.TextColor3 = Config.Theme.Warning
@@ -2226,7 +2222,7 @@ end
 print("═══════════════════════════════════════════════════════════")
 print("  VOXY OP HUB - ULTIMATE EDITION")
 print("  Version: " .. Config.Version)
-print("  Features: Combat + ESP + Movement + Teleport + Troll")
+print(" 
 print("═══════════════════════════════════════════════════════════")
 
 if KeySystem.Enabled then
